@@ -1,0 +1,206 @@
+{
+  "ui": {
+    "type": "menu",
+    "title": "Main Menu",
+    "options": [
+      {
+        "name": "default_dataset_1",
+        "type": "dataset",
+        "children": [
+          {
+            "name": "row_crud_analysis",
+            "type": "menu",
+            "children": [
+              {
+                "name": "create",
+                "type": "form",
+                "description": "Prompt user to fill out each column",
+                "api": {
+                  "endpoint": "/api/row/create",
+                  "method": "POST"
+                }
+              },
+              {
+                "name": "read_update_delete",
+                "type": "search_screen",
+                "description": "Search and filter rows",
+                "api": [
+                  {
+                    "purpose": "initial column detail",
+                    "endpoint": "/api/initial-column-detail",
+                    "method": "GET"
+                  },
+                  {
+                    "purpose": "filter column detail default",
+                    "endpoint": "/api/filter-column-detail/default",
+                    "method": "POST"
+                  },
+                  {
+                    "purpose": "filter column detail search",
+                    "endpoint": "/api/filter-column-detail/search",
+                    "method": "POST"
+                  },
+                  {
+                    "purpose": "row candidates",
+                    "endpoint": "/api/row-candidates",
+                    "method": "POST"
+                  }
+                ],
+                "candidate_screen": {
+                  "candidate": {
+                    "type": "row_view",
+                    "children": [
+                      {
+                        "name": "row_info_analysis",
+                        "api": {
+                          "endpoint": "/api/row/detail",
+                          "method": "GET"
+                        }
+                      },
+                      {
+                        "name": "update",
+                        "api": {
+                          "endpoint": "/api/row/update",
+                          "method": "PUT"
+                        }
+                      },
+                      {
+                        "name": "delete",
+                        "api": {
+                          "endpoint": "/api/row/delete",
+                          "method": "DELETE"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "column_analysis",
+            "type": "menu",
+            "children": [
+              {
+                "name": "default_analysis",
+                "type": "menu",
+                "children": [
+                  {
+                    "name": "mono_analysis",
+                    "api": {
+                      "endpoint": "/api/analysis/mono",
+                      "method": "POST"
+                    }
+                  },
+                  {
+                    "name": "cross_analysis",
+                    "api": {
+                      "endpoint": "/api/analysis/cross",
+                      "method": "POST"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "custom_analysis",
+                "api": {
+                  "endpoint": "/api/analysis/custom",
+                  "method": "POST"
+                }
+              }
+            ]
+          },
+          {
+            "name": "schema_edit",
+            "type": "menu",
+            "children": [
+              {
+                "name": "column_update",
+                "api": {
+                  "endpoint": "/api/schema/column/update",
+                  "method": "PUT"
+                }
+              },
+              {
+                "name": "column_delete",
+                "api": {
+                  "endpoint": "/api/schema/column/delete",
+                  "method": "DELETE"
+                }
+              },
+              {
+                "name": "add_table",
+                "api": {
+                  "endpoint": "/api/schema/table/create",
+                  "method": "POST"
+                }
+              }
+            ]
+          }
+        ]
+      },
+
+      {
+        "name": "default_dataset_2",
+        "type": "dataset"
+      },
+
+      {
+        "name": "make_custom_dataset",
+        "type": "menu",
+        "children": [
+          {
+            "name": "dataset1",
+            "type": "dataset",
+            "children": [
+              {
+                "name": "row_crud_analysis"
+              },
+              {
+                "name": "column_analysis"
+              },
+              {
+                "name": "schema_edit"
+              },
+              {
+                "name": "rename_database",
+                "api": {
+                  "endpoint": "/api/dataset/rename",
+                  "method": "PUT"
+                }
+              },
+              {
+                "name": "delete_database",
+                "api": {
+                  "endpoint": "/api/dataset/delete",
+                  "method": "DELETE"
+                }
+              }
+            ]
+          },
+
+          {
+            "name": "dataset2",
+            "type": "dataset"
+          },
+          {
+            "name": "dataset3",
+            "type": "dataset"
+          },
+          {
+            "name": "datasetn",
+            "type": "dataset"
+          },
+
+          {
+            "name": "add_dataset",
+            "api": {
+              "endpoint": "/api/dataset/create",
+              "method": "POST"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
