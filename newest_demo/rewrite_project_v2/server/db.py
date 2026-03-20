@@ -24,7 +24,7 @@ SUPPORTED_FILTER_COLUMNS = [
 NUMERIC_FILTER_COLUMNS = {"startYear", "runtimeMinutes", "averageRating", "numVotes"}
 CATEGORICAL_FILTER_COLUMNS = {"titleType", "isAdult", "genres"}
 PREFETCH_SAMPLE_RATIO = 0.10
-QUERY_FETCH_CAP = 300
+# QUERY_FETCH_CAP = 300
 
 
 @dataclass(frozen=True)
@@ -331,6 +331,8 @@ class DatabaseManager:
         offset: int = 0,
     ) -> Dict[str, Any]:
         info = self.get_dataset_info(dataset_name)
+        limit = 20
+        offset = max(0, int(offset))
         table = self._quote_identifier(info["table_name"])
         quoted_pk = self._quote_identifier(info["primary_key_column"])
 
@@ -370,11 +372,15 @@ class DatabaseManager:
         sql = f"SELECT * FROM {table}"
         if where_clauses:
             sql += "\nWHERE " + "\n  AND ".join(where_clauses)
-        sql += "\nLIMIT ?"
-        params.append(max(limit * 10, QUERY_FETCH_CAP))
 
         with self._connect() as conn:
-            rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+            cur = conn.execute(sql, params)
+            rows: List[Dict[str, Any]] = []
+            while True:
+                batch = cur.fetchmany(5000)
+                if not batch:
+                    break
+                rows.extend(dict(r) for r in batch)
 
         rows = self._apply_search_filter(rows, search_text or "")
 
