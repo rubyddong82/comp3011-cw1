@@ -1,37 +1,16 @@
 [
   {"type":"directory","name":".","contents":[
-    {"type":"directory","name":"__pycache__","contents":[
-      {"type":"file","name":"main.cpython-313.pyc"}
-    ]},
     {"type":"directory","name":"client","contents":[
-      {"type":"directory","name":"__pycache__","contents":[
-        {"type":"file","name":"client_main.cpython-313.pyc"},
-        {"type":"file","name":"ui.cpython-313.pyc"}
-      ]},
       {"type":"file","name":"client_main.py"},
-      {"type":"file","name":"ui.py"},
-      {"type":"file","name":"ui_schema.json"}
-    ]},
-    {"type":"directory","name":"config","contents":[
-      {"type":"directory","name":"__pycache__","contents":[
-        {"type":"file","name":"search_analysis.cpython-313.pyc"}
-      ]},
-      {"type":"file","name":"search_analysis.py"}
+      {"type":"file","name":"new_ui_schema.json"},
+      {"type":"file","name":"ui.py"}
     ]},
     {"type":"file","name":"main.py"},
     {"type":"directory","name":"server","contents":[
-      {"type":"directory","name":"__pycache__","contents":[
-        {"type":"file","name":"db.cpython-313.pyc"},
-        {"type":"file","name":"import_tsv.cpython-313.pyc"},
-        {"type":"file","name":"server_main.cpython-313.pyc"}
-      ]},
+      {"type":"file","name":"imdb.db"},
       {"type":"file","name":"db.py"},
-      {"type":"file","name":"import_tsv.py"},
       {"type":"file","name":"server_main.py"}
     ]},
-    {"type":"file","name":"tree.json"},
-    {"type":"link","name":"tsv","target":"/mnt/c/Users/user/SomeGoodFiles/CS3-2/classPDF/web services & web data/cw1/cw1/tsv"}
+    {"type":"file","name":"tree.json"}
   ]}
-,
-  {"type":"report","directories":9,"files":16}
 ]

@@ -1,0 +1,300 @@
+{
+  "label": "Main Menu",
+  "type": "menu",
+  "children": [
+    {
+      "label": "Dataset 1",
+      "type": "dataset",
+      "dataset_name": "movies",
+      "api": {
+        "on_enter": {
+          "name": "get_dataset_query_config",
+          "purpose": "Load dataset metadata, primary key, search column, create form columns, and filterable columns."
+        }
+      },
+      "children": [
+        {
+          "label": "Create",
+          "type": "create_row",
+          "title": "Create New Row",
+          "layout": {
+            "mode": "form"
+          },
+          "form": {
+            "auto_generate_primary_key": true,
+            "primary_key_column": "tconst",
+            "fields_from_dataset": true,
+            "exclude_fields": ["tconst"]
+          },
+          "api": {
+            "on_enter": {
+              "name": "get_dataset_query_config",
+              "purpose": "Load createable columns for the form."
+            },
+            "on_submit": {
+              "name": "create_row",
+              "purpose": "Create a new movie row. Primary key is generated automatically."
+            }
+          }
+        },
+        {
+          "label": "Read / Update / Delete",
+          "type": "row_crud_workbench",
+          "title": "Read / Update / Delete",
+          "api": {
+            "on_enter": {
+              "name": "get_dataset_query_config",
+              "purpose": "Load search column, primary key, and filterable columns for the workbench."
+            }
+          },
+          "layout": {
+            "mode": "stacked_sections",
+            "sections": [
+              {
+                "id": "search_section",
+                "label": "Search",
+                "kind": "search_box",
+                "position": "top",
+                "search_column_from_dataset": true,
+                "placeholder": "Type title text here",
+                "api": {
+                  "on_enter": {
+                    "name": "none",
+                    "purpose": "No request needed just to focus the search box."
+                  },
+                  "on_change": {
+                    "name": "none",
+                    "purpose": "Typing only updates local UI state until query is run."
+                  }
+                }
+              },
+              {
+                "id": "filter_section",
+                "label": "Columns / Filters",
+                "kind": "filter_column_browser",
+                "position": "middle",
+                "source": "dataset_filter_columns",
+                "filter_value_behavior": {
+                  "categorical": "sort_by_frequency_desc",
+                  "numeric": {
+                    "bucket": true,
+                    "default_bucket_count": 5,
+                    "sort": "ascending"
+                  }
+                },
+                "api": {
+                  "on_enter": {
+                    "name": "get_filter_columns",
+                    "purpose": "Load the available filterable columns for this dataset."
+                  },
+                  "on_click_column": {
+                    "name": "get_filter_choices",
+                    "purpose": "Load available filter options for the selected column. Categorical values are sorted by frequency; numeric values are bucketed."
+                  },
+                  "on_click_filter_value": {
+                    "name": "update_local_filter_state",
+                    "purpose": "Add or replace the chosen filter in the current local query state."
+                  }
+                }
+              },
+              {
+                "id": "action_section",
+                "label": "Actions",
+                "kind": "action_row",
+                "position": "bottom",
+                "actions": [
+                  {
+                    "id": "run_query",
+                    "label": "Query",
+                    "action": "query_rows",
+                    "api": {
+                      "on_click": {
+                        "name": "query_rows",
+                        "purpose": "Apply selected column filters first, then apply text search, then return matching rows sorted by evaluation."
+                      }
+                    }
+                  },
+                  {
+                    "id": "clear_search_and_filters",
+                    "label": "Clear Filter/Search",
+                    "action": "clear_search_and_filters",
+                    "api": {
+                      "on_click": {
+                        "name": "clear_local_query_state",
+                        "purpose": "Clear local search text, selected filters, cached result rows, and temporary row evaluation state."
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "result_section",
+                "label": "Selected Rows",
+                "kind": "result_list",
+                "position": "after_query",
+                "hidden_until": "run_query",
+                "query_behavior": {
+                  "apply_filters_first": true,
+                  "apply_text_search_after_filters": true,
+                  "default_sort": "evaluation_desc"
+                },
+                "display": {
+                  "row_title_column": "primaryTitle",
+                  "show_columns": [
+                    "tconst",
+                    "primaryTitle",
+                    "titleType",
+                    "startYear",
+                    "averageRating",
+                    "numVotes",
+                    "evaluation_score"
+                  ]
+                },
+                "api": {
+                  "on_enter": {
+                    "name": "none",
+                    "purpose": "Rows are already loaded by query_rows."
+                  },
+                  "on_click_row": {
+                    "name": "get_row_detail",
+                    "purpose": "Load the clicked movie row plus the cached evaluation detail for the current query result set."
+                  }
+                },
+                "on_enter_row": {
+                  "open_screen_type": "row_detail_editor"
+                }
+              }
+            ]
+          },
+          "children": [
+            {
+              "label": "Selected Row Detail",
+              "type": "row_detail_editor",
+              "title": "Selected Row",
+              "api": {
+                "on_enter": {
+                  "name": "get_row_detail",
+                  "purpose": "Load full movie row data and its evaluation detail for display."
+                }
+              },
+              "layout": {
+                "mode": "two_sections",
+                "sections": [
+                  {
+                    "id": "row_detail_section",
+                    "label": "Movie Detail",
+                    "kind": "row_detail",
+                    "display": {
+                      "show_columns": [
+                        "tconst",
+                        "primaryTitle",
+                        "originalTitle",
+                        "titleType",
+                        "isAdult",
+                        "startYear",
+                        "endYear",
+                        "runtimeMinutes",
+                        "genres",
+                        "averageRating",
+                        "numVotes"
+                      ],
+                      "show_evaluation": true,
+                      "show_evaluation_fields": [
+                        "score",
+                        "summary",
+                        "average_rating",
+                        "num_votes",
+                        "global_mean_rating",
+                        "global_votes_threshold",
+                        "weighted_rating",
+                        "recency_norm",
+                        "recency_multiplier",
+                        "final_score"
+                      ]
+                    }
+                  },
+                  {
+                    "id": "row_action_section",
+                    "label": "Actions",
+                    "kind": "action_list",
+                    "actions": [
+                      {
+                        "id": "edit_row",
+                        "label": "Edit",
+                        "action": "open_edit_form",
+                        "api": {
+                          "on_click": {
+                            "name": "none",
+                            "purpose": "Open local edit form prefilled with the selected row values."
+                          }
+                        }
+                      },
+                      {
+                        "id": "delete_row",
+                        "label": "Delete",
+                        "action": "delete_row",
+                        "confirm": true,
+                        "api": {
+                          "on_click": {
+                            "name": "delete_row",
+                            "purpose": "Delete the selected movie row from the dataset."
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "label": "Edit Row",
+                  "type": "edit_row_form",
+                  "title": "Edit Row",
+                  "layout": {
+                    "mode": "form"
+                  },
+                  "form": {
+                    "fields_from_dataset": true,
+                    "exclude_fields": ["tconst"],
+                    "prefill_from_selected_row": true
+                  },
+                  "api": {
+                    "on_enter": {
+                      "name": "get_row_detail",
+                      "purpose": "Load existing row values to prefill the edit form."
+                    },
+                    "on_submit": {
+                      "name": "update_row",
+                      "purpose": "Save edited values for the selected movie row."
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "Help",
+      "type": "help_screen",
+      "title": "Help",
+      "layout": {
+        "mode": "text"
+      },
+      "content": [
+        "Use arrow keys to move between sections and items.",
+        "Press Enter to select a section, field, action, or row.",
+        "In Read / Update / Delete, choose filters first, then run Query.",
+        "Rows are sorted by evaluation after querying.",
+        "Press Backspace or x to return to the previous screen."
+      ],
+      "api": {
+        "on_enter": {
+          "name": "none",
+          "purpose": "Help content is static and does not require a request."
+        }
+      }
+    }
+  ]
+}

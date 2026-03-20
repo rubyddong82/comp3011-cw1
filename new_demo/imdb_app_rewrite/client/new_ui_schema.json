@@ -1,0 +1,70 @@
+{
+  "label": "Main Menu",
+  "type": "menu",
+  "children": [
+    {
+      "label": "Default Dataset 1",
+      "name": "default_dataset_1",
+      "type": "dataset",
+      "dataset_name": "movies",
+      "children": [
+            {
+              "label": "Create",
+              "type": "placeholder",
+              "api": {
+                "endpoint": "/api/row/create",
+                "method": "POST"
+              }
+            },
+            {
+              "label": "Read / Update / Delete",
+              "type": "read_update_delete",
+              "api": {
+                "initial_column_detail": {
+                  "endpoint": "/api/initial-column-detail",
+                  "method": "GET"
+                }
+               },
+              "children" : [
+                 {"label" : "search",
+                  "type" : "placeholder",
+                  "api" : {
+                    "search_rows_by_text": {
+                      "endpoint": "/api/search-rows-by-text",
+                      "method": "GET"
+                    }
+                  }
+                 },
+                 {"label" : "column detail",
+                  "type" : "placeholder",
+                  "api" : {
+                    "column_detail": {
+                      "endpoint": "/api/column-detail",
+                      "method": "GET"
+                    }
+                   },
+                  "children": [ 
+                   {}
+                  }
+                 {
+                  "label": "Filter Column Detail (Default)",
+                  "type": "placeholder",
+                  "api": 
+                "filter_column_detail_default": {
+                  "endpoint": "/api/filter-column-detail/default",
+                  "method": "POST"
+                },
+                "filter_column_detail_search": {
+                  "endpoint": "/api/filter-column-detail/search",
+                  "method": "POST"
+                },
+                "row_candidates": {
+                  "endpoint": "/api/row-candidates",
+                  "method": "POST"
+                }
+              }
+            }
+          ]
+        }
+     ]
+}
