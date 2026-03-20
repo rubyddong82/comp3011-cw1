@@ -1,80 +1,113 @@
 import curses
 import json
-import textwrap
-from typing import Any, Dict, List, Optional
+import threading
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
-from client_main import (
-    ApiClientError,
-    ApiHttpClient,
-    ClientConfig,
-    ClientController,
-    load_ui_schema,
-)
+
+class RequestCancelled(Exception):
+    pass
 
 
 class TerminalUi:
-    def __init__(self, stdscr: Any, controller: ClientController, ui_schema: Dict[str, Any]) -> None:
+    SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    def __init__(self, stdscr: Any, controller: Any, ui_schema: Dict[str, Any]) -> None:
         self.stdscr = stdscr
         self.controller = controller
         self.root_schema = ui_schema
-        self.stack: List[Dict[str, Any]] = [self.root_schema]
-        self.selected_indices: List[int] = [0]
-        self.message: str = ""
+        self.stack: List[Dict[str, Any]] = [{"node": ui_schema, "state": {"selected": 0}}]
+        self.message = ""
         self.root_exit = False
+        self.spinner_index = 0
+        self.colors: Dict[str, int] = {}
 
     def run(self) -> None:
         curses.curs_set(0)
         self.stdscr.keypad(True)
-
+        self.init_colors()
+        self.message = "Connecting..."
         try:
-            health = self.controller.connect()
-            self.message = f"Connected: {self._safe_one_line(health)}"
-        except ApiClientError as exc:
+            health = self.run_with_spinner("Connecting to server", self.controller.connect)
+            service = health.get("data", {}).get("service", "server")
+            self.message = f"Connected to {service}."
+        except RequestCancelled:
+            self.message = "Initial request cancelled."
+        except Exception as exc:
             self.message = f"Server connection failed: {exc}"
 
         while not self.root_exit:
             node = self.current_node()
             node_type = node.get("type", "menu")
-
             if node_type in {"menu", "dataset"}:
-                self.render_menu_screen(node)
-                self.handle_menu_input(node)
-            elif node_type == "read_update_delete":
-                self.run_read_update_delete_screen(node)
-            elif node_type == "placeholder":
-                self.run_placeholder_screen(node)
+                self.run_menu_screen(node)
+            elif node_type == "help_screen":
+                self.run_help_screen(node)
+            elif node_type == "create_row":
+                self.run_form_screen(node, mode="create")
+            elif node_type == "edit_row_form":
+                self.run_form_screen(node, mode="edit")
+            elif node_type == "row_crud_workbench":
+                self.run_workbench_screen(node)
+            elif node_type == "row_detail_editor":
+                self.run_row_detail_screen(node)
             else:
-                self.message = f"Unsupported node type: {node_type}"
+                self.message = f"Unsupported screen type: {node_type}"
                 self.go_back()
 
-    def current_node(self) -> Dict[str, Any]:
+    def init_colors(self) -> None:
+        if not curses.has_colors():
+            return
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_CYAN, -1)
+        curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_CYAN)
+        curses.init_pair(3, curses.COLOR_YELLOW, -1)
+        curses.init_pair(4, curses.COLOR_GREEN, -1)
+        curses.init_pair(5, curses.COLOR_MAGENTA, -1)
+        curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLUE)
+        curses.init_pair(7, curses.COLOR_RED, -1)
+        curses.init_pair(8, curses.COLOR_BLACK, curses.COLOR_GREEN)
+        self.colors = {
+            "title": curses.color_pair(1) | curses.A_BOLD,
+            "active_border": curses.color_pair(2) | curses.A_BOLD,
+            "panel": curses.color_pair(3),
+            "ok": curses.color_pair(4) | curses.A_BOLD,
+            "accent": curses.color_pair(5) | curses.A_BOLD,
+            "footer": curses.color_pair(6),
+            "error": curses.color_pair(7) | curses.A_BOLD,
+            "button": curses.color_pair(8) | curses.A_BOLD,
+        }
+
+    def current_entry(self) -> Dict[str, Any]:
         return self.stack[-1]
 
-    def current_index(self) -> int:
-        return self.selected_indices[-1]
+    def current_node(self) -> Dict[str, Any]:
+        return self.current_entry()["node"]
 
-    def set_current_index(self, value: int) -> None:
-        self.selected_indices[-1] = value
+    def current_state(self) -> Dict[str, Any]:
+        return self.current_entry()["state"]
 
-    def push_node(self, node: Dict[str, Any]) -> None:
-        self.stack.append(node)
-        self.selected_indices.append(0)
+    def push_node(self, node: Dict[str, Any], state: Optional[Dict[str, Any]] = None) -> None:
+        self.stack.append({"node": node, "state": state or {}})
 
     def go_back(self) -> None:
         if len(self.stack) > 1:
             self.stack.pop()
-            self.selected_indices.pop()
         else:
             self.root_exit = True
 
-    def get_breadcrumb(self) -> str:
-        return " > ".join(node.get("label", "Untitled") for node in self.stack)
+    def dims(self) -> Tuple[int, int]:
+        return self.stdscr.getmaxyx()
 
-    def get_active_dataset_name(self) -> Optional[str]:
-        for node in reversed(self.stack):
-            if node.get("type") == "dataset" and node.get("dataset_name"):
-                return node["dataset_name"]
-        return None
+    def get_layout_dims(self) -> Tuple[int, int, int]:
+        max_y, max_x = self.dims()
+        if max_x >= 120:
+            log_w = min(48, max(36, max_x // 3))
+        else:
+            log_w = 0
+        main_w = max_x - log_w - (3 if log_w else 0)
+        return max_y, main_w, log_w
 
     def clear(self) -> None:
         self.stdscr.erase()
@@ -82,402 +115,732 @@ class TerminalUi:
     def refresh(self) -> None:
         self.stdscr.refresh()
 
-    def dims(self) -> tuple[int, int]:
-        return self.stdscr.getmaxyx()
-
     def write(self, y: int, x: int, text: str, attr: int = 0) -> None:
         max_y, max_x = self.dims()
-        if 0 <= y < max_y:
-            self.stdscr.addstr(y, x, text[: max_x - x - 1], attr)
-
-    def draw_header(self, title: str, subtitle: Optional[str] = None) -> int:
-        self.clear()
-        self.write(0, 0, title, curses.A_BOLD)
-        self.write(1, 0, self.get_breadcrumb())
-        row = 3
-        if subtitle:
-            for line in self.wrap(subtitle, self.dims()[1] - 1):
-                self.write(row, 0, line)
-                row += 1
-        return row
-
-    def draw_footer(self) -> None:
-        max_y, _ = self.dims()
-        footer = "Enter=select  ↑/↓=move  x/backspace=back/exit"
-        if self.message:
-            footer = f"{footer} | {self.message}"
-        self.write(max_y - 1, 0, footer)
-
-    def wrap(self, text: str, width: int) -> List[str]:
-        if not text:
-            return [""]
-        out: List[str] = []
-        for part in text.splitlines() or [""]:
-            out.extend(textwrap.wrap(part, max(10, width)) or [""])
-        return out
-
-    def _safe_one_line(self, data: Any) -> str:
-        raw = json.dumps(data, ensure_ascii=False)
-        return raw[:150]
-
-    def render_menu_screen(self, node: Dict[str, Any]) -> None:
-        subtitle = None
-        if node.get("type") == "dataset":
-            subtitle = f"Dataset: {node.get('dataset_name')}"
-
-        row = self.draw_header(node.get("label", "Menu"), subtitle)
-        children = node.get("children", [])
-        selected = self.current_index()
-
-        for i, child in enumerate(children):
-            attr = curses.A_REVERSE if i == selected else 0
-            prefix = "► " if i == selected else "  "
-            self.write(row + i, 0, prefix + child.get("label", "Untitled"), attr)
-
-        self.draw_footer()
-        self.refresh()
-
-    def handle_menu_input(self, node: Dict[str, Any]) -> None:
-        children = node.get("children", [])
-        if not children:
-            ch = self.stdscr.getch()
-            if ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
-                self.go_back()
+        if y < 0 or y >= max_y or x >= max_x:
             return
-
-        ch = self.stdscr.getch()
-
-        if ch == curses.KEY_UP:
-            self.set_current_index((self.current_index() - 1) % len(children))
-        elif ch == curses.KEY_DOWN:
-            self.set_current_index((self.current_index() + 1) % len(children))
-        elif ch in (10, 13, curses.KEY_ENTER):
-            selected = children[self.current_index()]
-            if selected.get("type") == "dataset" and selected.get("dataset_name"):
-                self.controller.set_dataset(selected["dataset_name"])
-            self.push_node(selected)
-        elif ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
-            self.go_back()
-
-    def run_placeholder_screen(self, node: Dict[str, Any]) -> None:
-        lines = [
-            f"Screen: {node.get('label', 'Placeholder')}",
-            "",
-            "This feature is not wired yet.",
-            "",
-            "API metadata:",
-            json.dumps(node.get("api", {}), indent=2, ensure_ascii=False),
-            "",
-            "Press x or Backspace to return."
-        ]
-        self.run_text_screen(node.get("label", "Placeholder"), lines)
-
-    def run_text_screen(self, title: str, lines: List[str]) -> None:
-        scroll = 0
-        while True:
-            self.clear()
-            max_y, max_x = self.dims()
-            self.write(0, 0, title, curses.A_BOLD)
-            self.write(1, 0, self.get_breadcrumb())
-
-            flat: List[str] = []
-            for line in lines:
-                flat.extend(self.wrap(line, max_x - 1))
-
-            body_height = max_y - 4
-            visible = flat[scroll: scroll + body_height]
-
-            row = 3
-            for line in visible:
-                self.write(row, 0, line)
-                row += 1
-
-            self.write(max_y - 1, 0, "↑/↓=scroll  x/backspace=return")
-            self.refresh()
-
-            ch = self.stdscr.getch()
-            if ch == curses.KEY_UP:
-                scroll = max(0, scroll - 1)
-            elif ch == curses.KEY_DOWN:
-                scroll = min(max(0, len(flat) - body_height), scroll + 1)
-            elif ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
-                self.go_back()
-                return
-
-    def run_read_update_delete_screen(self, node: Dict[str, Any]) -> None:
-        dataset_name = self.get_active_dataset_name()
-        if not dataset_name:
-            self.message = "No dataset selected."
-            self.go_back()
-            return
-
-        self.controller.set_dataset(dataset_name)
-
+        safe = text[: max(0, max_x - x - 1)]
         try:
-            response = self.controller.load_query_screen_info(dataset_name)
-        except ApiClientError as exc:
-            self.run_text_screen(
-                "Query Screen Error",
-                [
-                    f"Failed to load initial column detail for dataset '{dataset_name}'.",
-                    "",
-                    str(exc),
-                ],
-            )
+            self.stdscr.addstr(y, x, safe, attr)
+        except curses.error:
+            pass
+
+    def draw_box(self, y: int, x: int, h: int, w: int, title: str, active: bool = False) -> None:
+        if h < 3 or w < 4:
             return
+        attr = self.colors.get("active_border", curses.A_BOLD) if active else self.colors.get("panel", 0)
+        self.write(y, x, "┌" + "─" * (w - 2) + "┐", attr)
+        for row in range(y + 1, y + h - 1):
+            self.write(row, x, "│", attr)
+            self.write(row, x + w - 1, "│", attr)
+        self.write(y + h - 1, x, "└" + "─" * (w - 2) + "┘", attr)
+        self.write(y, x + 2, f" {title} ", attr)
 
-        while True:
-            session = self.controller.get_search_session(dataset_name)
-            data = response.get("data", {})
-            filter_columns = data.get("filter_columns", [])
-            candidates = []
-            if session.candidate_response:
-                candidates = session.candidate_response.get("data", {}).get("rows", [])
+    def draw_header(self, title: str, subtitle: str = "") -> int:
+        _, main_w, _ = self.get_layout_dims()
+        self.write(0, 2, title, self.colors.get("title", curses.A_BOLD))
+        if subtitle:
+            self.write(1, 2, subtitle[: max(0, main_w - 4)], self.colors.get("accent", 0))
+        return 3
 
-            self.render_rud_screen(
-                dataset_name=dataset_name,
-                query_screen_data=data,
-                search_text=session.search_text,
-                filters=session.filters,
-                candidates=candidates,
-            )
+    def draw_footer(self, hint: str = "Enter=select  Backspace/x=back") -> None:
+        max_y, max_x = self.dims()
+        footer = hint
+        if self.message:
+            footer += f" | {self.message}"
+        fill = " " * max(0, max_x - 1)
+        self.write(max_y - 1, 0, fill, self.colors.get("footer", curses.A_REVERSE))
+        self.write(max_y - 1, 1, footer, self.colors.get("footer", curses.A_REVERSE))
 
-            ch = self.stdscr.getch()
+    def _wrap_lines(self, lines: List[str], width: int, max_source_lines: int = 120) -> List[str]:
+        wrapped: List[str] = []
+        safe_width = max(8, width)
+        for raw_line in lines[-max_source_lines:]:
+            line = str(raw_line)
+            if not line:
+                wrapped.append("")
+                continue
+            while len(line) > safe_width:
+                wrapped.append(line[:safe_width])
+                line = line[safe_width:]
+            wrapped.append(line)
+        return wrapped
 
-            if ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
-                self.go_back()
-                return
-            elif ch == ord("s"):
-                entered = self.prompt_line("Search text: ", session.search_text)
-                if entered is not None:
-                    self.controller.update_search_text(entered, dataset_name)
-                    self.message = "Search text updated."
-            elif ch == ord("c"):
-                self.controller.clear_filters(dataset_name)
-                self.message = "Filters cleared."
-            elif ch == ord("f"):
-                try:
-                    new_filter = self.build_filter(dataset_name, filter_columns)
-                    if new_filter is not None:
-                        self.controller.add_filter(new_filter, dataset_name)
-                        self.message = f"Filter added on {new_filter.get('column')}."
-                except (ApiClientError, ValueError) as exc:
-                    self.message = f"Filter error: {exc}"
-            elif ch == ord("r"):
-                try:
-                    result = self.controller.run_candidate_query(dataset_name=dataset_name)
-                    row_count = result.get("data", {}).get("row_count", 0)
-                    self.message = f"Loaded {row_count} row candidate(s)."
-                except ApiClientError as exc:
-                    self.message = f"Query failed: {exc}"
-            elif ch == ord("v"):
-                if candidates:
-                    self.run_text_screen(
-                        "Candidate Rows",
-                        [json.dumps(c, indent=2, ensure_ascii=False) for c in candidates],
-                    )
-                    return
+    def draw_http_log_panel(self, top_y: int = 0) -> None:
+        max_y, main_w, log_w = self.get_layout_dims()
+        if log_w <= 0:
+            return
+        x = main_w + 2
+        h = max_y - top_y - 1
+        self.draw_box(top_y, x, h, log_w, "HTTP Log", active=False)
+        logs = self.controller.get_http_logs()
+        visible_h = h - 2
+        wrapped = self._wrap_lines(logs, log_w - 3, max_source_lines=60)
+        for i, line in enumerate(wrapped[-visible_h:]):
+            self.write(top_y + 1 + i, x + 1, line)
 
-    def render_rud_screen(
-        self,
-        *,
-        dataset_name: str,
-        query_screen_data: Dict[str, Any],
-        search_text: str,
-        filters: List[Dict[str, Any]],
-        candidates: List[Dict[str, Any]],
-    ) -> None:
-        row = self.draw_header(
-            "Read / Update / Delete",
-            f"Dataset: {dataset_name}\n"
-            "s=edit search  f=add filter  c=clear filters  r=run query  v=view results  x/backspace=back"
-        )
+    def draw_output_log_panel(self, y: int, x: int, h: int, w: int) -> None:
+        if h < 3 or w < 8:
+            return
+        self.draw_box(y, x, h, w, "Output Log", active=False)
+        try:
+            logs = self.controller.get_output_logs()
+        except Exception as exc:
+            logs = [f"<failed to load output log: {exc}>"]
+        visible_h = h - 2
+        wrapped = self._wrap_lines(logs, w - 3, max_source_lines=120)
+        for i, line in enumerate(wrapped[-visible_h:]):
+            self.write(y + 1 + i, x + 1, line)
 
-        search_column = query_screen_data.get("search_column")
-        pk_column = query_screen_data.get("primary_key_column")
-        filter_columns = query_screen_data.get("filter_columns", [])
+    def draw_loading_overlay(self, label: str) -> None:
+        self.clear()
+        self.draw_http_log_panel(0)
+        max_y, main_w, _ = self.get_layout_dims()
 
-        self.write(row, 0, f"Search column: {search_column}")
-        row += 1
-        self.write(row, 0, f"Primary key column: {pk_column}")
-        row += 1
-        self.write(row, 0, f"Search text: {search_text or '(empty)'}")
-        row += 2
+        output_h = max(8, max_y // 3)
+        output_h = min(output_h, max(8, max_y - 10))
+        output_y = max(1, max_y - output_h - 1)
+        output_x = 2
+        output_w = max(24, main_w - 4)
+        self.draw_output_log_panel(output_y, output_x, output_h, output_w)
 
-        self.write(row, 0, "Filterable columns:", curses.A_BOLD)
-        row += 1
-        for col in filter_columns[:5]:
-            if isinstance(col, dict):
-                label = f"- {col.get('name')} [{col.get('value_kind')}]"
-            else:
-                label = f"- {col}"
-            self.write(row, 0, label)
-            row += 1
-
-        row += 1
-        self.write(row, 0, f"Active filters: {len(filters)}", curses.A_BOLD)
-        row += 1
-        for flt in filters[:5]:
-            self.write(row, 0, "- " + json.dumps(flt, ensure_ascii=False))
-            row += 1
-
-        row += 1
-        self.write(row, 0, f"Loaded candidates: {len(candidates)}", curses.A_BOLD)
-        row += 1
-        preview_limit = max(0, self.dims()[0] - row - 2)
-        for cand in candidates[:preview_limit]:
-            line = self.render_candidate_line(cand, search_column, pk_column)
-            self.write(row, 0, line)
-            row += 1
-
-        self.draw_footer()
+        free_h = max(7, output_y - 2)
+        h, w = 7, min(56, max(24, main_w - 4))
+        y = max(1, (free_h - h) // 2)
+        x = max(2, (main_w - w) // 2)
+        self.draw_box(y, x, h, w, "Working", active=True)
+        spinner = self.SPINNER_FRAMES[self.spinner_index]
+        self.write(y + 2, x + 3, f"{spinner} {label}", self.colors.get("ok", curses.A_BOLD))
+        self.write(y + 4, x + 3, "Press x / Backspace / Esc to cancel waiting.", self.colors.get("panel", 0))
         self.refresh()
 
-    def render_candidate_line(
-        self,
-        candidate: Dict[str, Any],
-        search_column: Optional[str],
-        pk_column: Optional[str],
-    ) -> str:
-        pk_val = candidate.get(pk_column) if pk_column else candidate.get("id")
-        search_val = candidate.get(search_column) if search_column else ""
-        score = candidate.get("evaluation_score")
-        return f"- {pk_val} | {search_val} | score={score}"
+    def run_with_spinner(self, label: str, func: Any, *args: Any, **kwargs: Any) -> Any:
+        result: Dict[str, Any] = {}
+        error: Dict[str, Exception] = {}
+        done = threading.Event()
 
-    def prompt_line(self, prompt: str, initial: str = "") -> Optional[str]:
+        def target() -> None:
+            try:
+                result["value"] = func(*args, **kwargs)
+            except Exception as exc:
+                error["value"] = exc
+            finally:
+                done.set()
+
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+
+        # nodelay() does not return a restorable delay value.
+        # We explicitly switch to non-blocking mode, then restore to normal blocking mode.
+        self.stdscr.nodelay(True)
+        try:
+            while not done.is_set():
+                self.draw_loading_overlay(label)
+                ch = self.stdscr.getch()
+                if ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8, 27):
+                    self.message = f"Cancelled waiting for: {label}"
+                    raise RequestCancelled(label)
+                time.sleep(0.08)
+                self.spinner_index = (self.spinner_index + 1) % len(self.SPINNER_FRAMES)
+        finally:
+            self.stdscr.nodelay(False)
+
+        if "value" in error:
+            raise error["value"]
+        return result.get("value")
+
+    def prompt_line(self, title: str, initial: str = "") -> Optional[str]:
         curses.curs_set(1)
-        value = initial
-
+        value = list(initial)
+        cursor = len(value)
         while True:
-            max_y, max_x = self.dims()
-            self.write(max_y - 2, 0, " " * (max_x - 1))
-            self.write(max_y - 2, 0, f"{prompt}{value}")
-            self.stdscr.move(max_y - 2, min(len(prompt) + len(value), max_x - 2))
+            max_y, main_w, _ = self.get_layout_dims()
+            box_w = max(24, main_w - 4)
+            self.draw_box(max_y - 5, 2, 4, box_w, title, active=True)
+            rendered = "".join(value)
+            self.write(max_y - 3, 4, " " * max(1, box_w - 6))
+            self.write(max_y - 3, 4, rendered)
+            self.stdscr.move(max_y - 3, min(box_w - 3, 4 + cursor))
+            self.draw_http_log_panel(0)
             self.refresh()
-
             ch = self.stdscr.getch()
-
             if ch in (10, 13, curses.KEY_ENTER):
                 curses.curs_set(0)
-                return value
-            if ch == 27:
+                return "".join(value)
+            if ch in (27,):
                 curses.curs_set(0)
                 return None
             if ch in (curses.KEY_BACKSPACE, 127, 8):
-                value = value[:-1]
+                if cursor > 0:
+                    del value[cursor - 1]
+                    cursor -= 1
+            elif ch == curses.KEY_DC:
+                if cursor < len(value):
+                    del value[cursor]
+            elif ch == curses.KEY_LEFT:
+                cursor = max(0, cursor - 1)
+            elif ch == curses.KEY_RIGHT:
+                cursor = min(len(value), cursor + 1)
+            elif ch == curses.KEY_HOME:
+                cursor = 0
+            elif ch == curses.KEY_END:
+                cursor = len(value)
+            elif ch == 21:  # Ctrl-U
+                value = []
+                cursor = 0
             elif 32 <= ch <= 126:
-                value += chr(ch)
+                value.insert(cursor, chr(ch))
+                cursor += 1
 
-    def select_from_list(self, title: str, items: List[str]) -> Optional[str]:
-        if not items:
-            return None
-
+    def confirm(self, message: str) -> bool:
         idx = 0
+        options = ["No", "Yes"]
         while True:
             self.clear()
-            self.write(0, 0, title, curses.A_BOLD)
-            self.write(1, 0, "Enter=select  x/backspace=cancel")
-
-            row = 3
-            for i, item in enumerate(items):
-                attr = curses.A_REVERSE if i == idx else 0
-                prefix = "► " if i == idx else "  "
-                self.write(row, 0, prefix + item, attr)
-                row += 1
-
+            self.draw_http_log_panel(0)
+            max_y, main_w, _ = self.get_layout_dims()
+            self.draw_box(max_y // 2 - 3, max(2, main_w // 2 - 24), 7, min(48, main_w - 4), "Confirm", active=True)
+            self.write(max_y // 2 - 1, max(4, main_w // 2 - 20), message)
+            row_y = max_y // 2 + 1
+            base_x = max(6, main_w // 2 - 12)
+            for i, item in enumerate(options):
+                label = f"[ {item} ]"
+                attr = self.colors.get("button", curses.A_REVERSE) if i == idx else 0
+                self.write(row_y, base_x + i * 14, label, attr)
+            self.draw_footer("←/→ move  Enter=confirm  x/backspace=cancel")
             self.refresh()
+            ch = self.stdscr.getch()
+            if ch in (curses.KEY_LEFT, curses.KEY_UP):
+                idx = (idx - 1) % len(options)
+            elif ch in (curses.KEY_RIGHT, curses.KEY_DOWN):
+                idx = (idx + 1) % len(options)
+            elif ch in (10, 13, curses.KEY_ENTER):
+                return options[idx] == "Yes"
+            elif ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
+                return False
 
+    def select_from_list(self, title: str, choices: List[Tuple[str, Any]], subtitle: str = "") -> Optional[Any]:
+        if not choices:
+            self.message = "No choices available."
+            return None
+        idx = 0
+        scroll = 0
+        while True:
+            self.clear()
+            start_row = self.draw_header(title, subtitle)
+            self.draw_http_log_panel(0)
+            max_y, main_w, _ = self.get_layout_dims()
+            box_h = max_y - start_row - 2
+            self.draw_box(start_row, 2, box_h, main_w - 4, title, active=True)
+            visible_h = box_h - 2
+            if idx < scroll:
+                scroll = idx
+            elif idx >= scroll + visible_h:
+                scroll = idx - visible_h + 1
+            for i, (label, _) in enumerate(choices[scroll : scroll + visible_h]):
+                absolute = scroll + i
+                attr = self.colors.get("button", curses.A_REVERSE) if absolute == idx else 0
+                self.write(start_row + 1 + i, 4, label[: max(0, main_w - 8)], attr)
+            self.draw_footer("↑/↓ move  Enter=select  x/backspace=cancel")
+            self.refresh()
             ch = self.stdscr.getch()
             if ch == curses.KEY_UP:
-                idx = (idx - 1) % len(items)
+                idx = (idx - 1) % len(choices)
             elif ch == curses.KEY_DOWN:
-                idx = (idx + 1) % len(items)
+                idx = (idx + 1) % len(choices)
             elif ch in (10, 13, curses.KEY_ENTER):
-                return items[idx]
+                return choices[idx][1]
             elif ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
                 return None
 
-    def build_filter(
-        self,
-        dataset_name: str,
-        filter_columns: List[Dict[str, Any]],
-    ) -> Optional[Dict[str, Any]]:
-        column_names = [col["name"] for col in filter_columns if isinstance(col, dict) and "name" in col]
-        column_name = self.select_from_list("Choose filter column", column_names)
-        if not column_name:
-            return None
+    def run_menu_screen(self, node: Dict[str, Any]) -> None:
+        state = self.current_state()
+        children = node.get("children", [])
+        state.setdefault("selected", 0)
+        if node.get("type") == "dataset":
+            dataset_name = node.get("dataset_name")
+            if dataset_name:
+                self.controller.set_dataset(dataset_name)
+                try:
+                    self.run_with_spinner("Loading dataset config and filter summaries", self.controller.load_query_config, dataset_name, refresh=False)
+                except RequestCancelled:
+                    pass
+                except Exception as exc:
+                    self.message = f"Failed to load dataset config: {exc}"
+        while True:
+            self.clear()
+            title = node.get("label", "Menu")
+            subtitle = "Choose an option"
+            start_row = self.draw_header(title, subtitle)
+            self.draw_http_log_panel(0)
+            max_y, main_w, _ = self.get_layout_dims()
+            box_h = max_y - start_row - 2
+            self.draw_box(start_row, 2, box_h, main_w - 4, title, active=True)
+            for i, child in enumerate(children[: box_h - 2]):
+                attr = self.colors.get("button", curses.A_REVERSE) if i == state["selected"] else 0
+                self.write(start_row + 1 + i, 5, child.get("label", "Untitled"), attr)
+            self.draw_footer()
+            self.refresh()
+            ch = self.stdscr.getch()
+            if ch == curses.KEY_UP:
+                state["selected"] = (state["selected"] - 1) % max(1, len(children))
+            elif ch == curses.KEY_DOWN:
+                state["selected"] = (state["selected"] + 1) % max(1, len(children))
+            elif ch in (10, 13, curses.KEY_ENTER):
+                if not children:
+                    continue
+                selected_node = children[state["selected"]]
+                self.push_node(selected_node, {"selected": 0})
+                return
+            elif ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
+                self.go_back()
+                return
 
-        mode = self.select_from_list("Filter choice source", ["default", "search"])
-        if not mode:
-            return None
+    def run_help_screen(self, node: Dict[str, Any]) -> None:
+        self.current_state().setdefault("scroll", 0)
+        content = node.get("content", [])
+        lines = [str(x) for x in content]
+        while True:
+            self.clear()
+            start_row = self.draw_header(node.get("title", node.get("label", "Help")), "Read and press back to return")
+            self.draw_http_log_panel(0)
+            max_y, main_w, _ = self.get_layout_dims()
+            box_h = max_y - start_row - 2
+            self.draw_box(start_row, 2, box_h, main_w - 4, "Help", active=True)
+            visible_h = box_h - 2
+            scroll = self.current_state()["scroll"]
+            for i, line in enumerate(lines[scroll : scroll + visible_h]):
+                self.write(start_row + 1 + i, 4, line[: max(0, main_w - 8)])
+            self.draw_footer("↑/↓ scroll  x/backspace=back")
+            self.refresh()
+            ch = self.stdscr.getch()
+            if ch == curses.KEY_UP:
+                self.current_state()["scroll"] = max(0, self.current_state()["scroll"] - 1)
+            elif ch == curses.KEY_DOWN:
+                self.current_state()["scroll"] = min(max(0, len(lines) - visible_h), self.current_state()["scroll"] + 1)
+            elif ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
+                self.go_back()
+                return
 
-        if mode == "default":
-            detail = self.controller.get_filter_detail_default(column_name, dataset_name=dataset_name)
-        else:
-            label_search = self.prompt_line("Label search: ", "")
-            if label_search is None:
-                return None
-            detail = self.controller.get_filter_detail_from_search(
-                column_name,
-                label_search,
-                dataset_name=dataset_name,
-            )
+    def _normalize_field_defs(self, raw_fields: Any) -> List[Dict[str, Any]]:
+        fields: List[Dict[str, Any]] = []
+        for item in raw_fields or []:
+            if isinstance(item, str):
+                fields.append({"name": item, "label": item})
+            elif isinstance(item, dict) and item.get("name"):
+                fields.append({
+                    "name": str(item.get("name")),
+                    "label": str(item.get("label") or item.get("name")),
+                    **item,
+                })
+        return fields
 
-        data = detail.get("data", {})
-        choices = data.get("choices", [])
-        value_kind = data.get("value_kind")
+    def _infer_form_fields(self, config: Dict[str, Any], mode: str) -> List[Dict[str, Any]]:
+        primary_key = str(config.get("primary_key_column") or "tconst")
+        preferred_keys = ["create_fields"] if mode == "create" else ["editable_fields", "create_fields"]
+        raw_fields: Any = []
+        for key in preferred_keys:
+            raw_fields = config.get(key)
+            if raw_fields:
+                break
+        fields = self._normalize_field_defs(raw_fields)
+        if fields:
+            return [f for f in fields if f.get("name") != primary_key]
 
-        if value_kind == "numeric":
-            labels = [c.get("label", "bucket") for c in choices if isinstance(c, dict)]
-            picked_label = self.select_from_list("Choose numeric bucket", labels)
-            if not picked_label:
-                return None
-
-            chosen = next(
-                (c for c in choices if isinstance(c, dict) and c.get("label") == picked_label),
-                None,
-            )
-            if not chosen:
-                return None
-
-            return {
-                "column": column_name,
-                "kind": "numeric",
-                "min": chosen.get("min"),
-                "max": chosen.get("max"),
-            }
-
-        labels = []
-        for c in choices:
-            if isinstance(c, dict):
-                label = c.get("value")
-                if label is None:
-                    label = c.get("label")
-                if label is None:
-                    label = str(c)
+        # Fallback: use filter columns plus important text columns if explicit form fields are absent.
+        names: List[str] = []
+        for key in ("search_column", "original_title_column"):
+            value = config.get(key)
+            if isinstance(value, str) and value and value not in names and value != primary_key:
+                names.append(value)
+        if "originalTitle" not in names and primary_key != "originalTitle":
+            names.append("originalTitle")
+        for item in config.get("filter_columns", []) or []:
+            if isinstance(item, str):
+                name = item
+            elif isinstance(item, dict):
+                name = str(item.get("name") or "")
             else:
-                label = str(c)
-            labels.append(label)
+                name = ""
+            if name and name != primary_key and name not in names:
+                names.append(name)
+        return [{"name": name, "label": name} for name in names]
 
-        picked_value = self.select_from_list("Choose categorical value", labels)
-        if not picked_value:
-            return None
+    def run_form_screen(self, node: Dict[str, Any], mode: str) -> None:
+        dataset_name = self.controller.get_dataset()
+        state = self.current_state()
+        try:
+            config = self.run_with_spinner("Loading form config", self.controller.load_query_config, dataset_name)["data"]
+        except RequestCancelled:
+            return
 
-        return {
-            "column": column_name,
-            "kind": "categorical",
-            "value": picked_value,
-        }
+        fields = self._infer_form_fields(config, mode)
+        if not fields:
+            self.message = "No editable fields available."
+            self.go_back()
+            return
+
+        if mode == "create":
+            values = state.setdefault("values", {f["name"]: "" for f in fields})
+            row_id = None
+        else:
+            row_id = state.get("row_id")
+            try:
+                detail = self.run_with_spinner("Loading row detail", self.controller.get_row_detail, row_id, dataset_name)
+            except RequestCancelled:
+                return
+            row = detail.get("data", {}).get("row", {})
+            values = state.setdefault(
+                "values",
+                {f["name"]: "" if row.get(f["name"]) is None else str(row.get(f["name"])) for f in fields},
+            )
+
+        state.setdefault("selected", 0)
+        state.setdefault("scroll", 0)
+        while True:
+            self.clear()
+            title = node.get("title", "Form")
+            subtitle = "Create a new row" if mode == "create" else f"Edit row: {row_id}"
+            start_row = self.draw_header(title, subtitle)
+            self.draw_http_log_panel(0)
+            max_y, main_w, _ = self.get_layout_dims()
+            box_h = max_y - start_row - 2
+            self.draw_box(start_row, 2, box_h, main_w - 4, title, active=True)
+            visible_h = box_h - 4
+            items = [("field", f["name"], f.get("label", f["name"])) for f in fields] + [("action", "Save", "Save")]
+            selected = min(state["selected"], len(items) - 1)
+            state["selected"] = selected
+            scroll = state["scroll"]
+            if selected < scroll:
+                scroll = selected
+            elif selected >= scroll + visible_h:
+                scroll = selected - visible_h + 1
+            state["scroll"] = scroll
+            for i, item in enumerate(items[scroll : scroll + visible_h]):
+                kind, key, label = item
+                absolute = scroll + i
+                attr = self.colors.get("button", curses.A_REVERSE) if absolute == selected else 0
+                if kind == "field":
+                    display = str(values.get(key, ""))
+                    self.write(start_row + 1 + i, 4, f"{label:16} : {display}"[: max(0, main_w - 8)], attr)
+                else:
+                    self.write(start_row + 1 + i, 4, f"[ {label} ]", attr)
+            self.draw_footer("↑/↓ move  Enter=edit/select  x/backspace=back")
+            self.refresh()
+            ch = self.stdscr.getch()
+            if ch == curses.KEY_UP:
+                state["selected"] = (state["selected"] - 1) % len(items)
+            elif ch == curses.KEY_DOWN:
+                state["selected"] = (state["selected"] + 1) % len(items)
+            elif ch in (10, 13, curses.KEY_ENTER):
+                kind, key, label = items[state["selected"]]
+                if kind == "field":
+                    entered = self.prompt_line(f"Edit {label}", str(values.get(key, "")))
+                    if entered is not None:
+                        values[key] = entered
+                elif key == "Save":
+                    try:
+                        payload = {k: v for k, v in values.items()}
+                        if mode == "create":
+                            result = self.run_with_spinner("Creating row", self.controller.create_row, payload, dataset_name)
+                            created_id = result.get("data", {}).get("row_id") or result.get("data", {}).get("row", {}).get("tconst")
+                            self.message = f"Row created: {created_id}"
+                        else:
+                            self.run_with_spinner("Updating row", self.controller.update_row, row_id, payload, dataset_name)
+                            self.message = f"Row updated: {row_id}"
+                        self.go_back()
+                        return
+                    except RequestCancelled:
+                        pass
+                    except Exception as exc:
+                        self.message = f"Save failed: {exc}"
+            elif ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
+                self.go_back()
+                return
+
+    def run_workbench_screen(self, node: Dict[str, Any]) -> None:
+        dataset_name = self.controller.get_dataset()
+        state = self.current_state()
+        state.setdefault("active_section", 0)
+        state.setdefault("filter_index", 0)
+        state.setdefault("action_index", 0)
+        state.setdefault("result_index", 0)
+        try:
+            config = self.run_with_spinner("Loading query config", self.controller.load_query_config, dataset_name)["data"]
+        except RequestCancelled:
+            return
+        while True:
+            session = self.controller.get_search_session(dataset_name)
+            filter_columns = config.get("filter_columns", [])
+            results = self.controller.get_selected_rows(dataset_name)
+            sections = ["search", "filters", "actions"] + (["results"] if results else [])
+            active_section = sections[state["active_section"] % len(sections)]
+            state["active_section"] = sections.index(active_section)
+
+            self.clear()
+            subtitle = f"Dataset: {dataset_name} | Search column: {config.get('search_column')}"
+            start_row = self.draw_header(node.get("title", "Workbench"), subtitle)
+            self.draw_http_log_panel(0)
+            max_y, main_w, _ = self.get_layout_dims()
+            body_h = max_y - start_row - 2
+            top_h = 5
+            mid_h = max(8, body_h // 3)
+            action_h = 5
+            result_h = body_h - top_h - mid_h - action_h
+            if result_h < 4:
+                result_h = 4
+                mid_h = max(6, body_h - top_h - action_h - result_h)
+
+            self.draw_box(start_row, 2, top_h, main_w - 4, "Search", active=(active_section == "search"))
+            self.write(start_row + 1, 4, "Enter to edit. Backspace works. Ctrl-U clears during edit.", self.colors.get("panel", 0))
+            self.write(start_row + 2, 4, session.search_text or "<empty>", self.colors.get("accent", 0))
+
+            middle_y = start_row + top_h
+            self.draw_box(middle_y, 2, mid_h, main_w - 4, "Columns / Filters", active=(active_section == "filters"))
+            active_filter_map = {flt.get("column"): flt for flt in session.filters}
+            visible_mid = mid_h - 2
+            filter_scroll = state.setdefault("filter_scroll", 0)
+            if state["filter_index"] < filter_scroll:
+                filter_scroll = state["filter_index"]
+            elif state["filter_index"] >= filter_scroll + visible_mid:
+                filter_scroll = state["filter_index"] - visible_mid + 1
+            state["filter_scroll"] = filter_scroll
+            for i, col in enumerate(filter_columns[filter_scroll : filter_scroll + visible_mid]):
+                absolute = filter_scroll + i
+                selected = active_section == "filters" and absolute == state["filter_index"]
+                attr = self.colors.get("button", curses.A_REVERSE) if selected else 0
+                label = f"{col['name']:16} [{col['value_kind']}]"
+                if col["name"] in active_filter_map:
+                    label += f"  => {self._format_filter(active_filter_map[col['name']])}"
+                self.write(middle_y + 1 + i, 4, label[: max(0, main_w - 8)], attr)
+
+            action_y = middle_y + mid_h
+            self.draw_box(action_y, 2, action_h, main_w - 4, "Actions", active=(active_section == "actions"))
+            action_labels = ["Query", "Clear Filter/Search"]
+            base_x = 5
+            for i, label in enumerate(action_labels):
+                attr = self.colors.get("button", curses.A_REVERSE) if active_section == "actions" and i == state["action_index"] else 0
+                self.write(action_y + 2, base_x, f"[ {label} ]", attr)
+                base_x += len(label) + 8
+
+            if results:
+                result_y = action_y + action_h
+                self.draw_box(result_y, 2, result_h, main_w - 4, "Selected Rows", active=(active_section == "results"))
+                visible_res = result_h - 2
+                res_scroll = state.setdefault("result_scroll", 0)
+                if state["result_index"] < res_scroll:
+                    res_scroll = state["result_index"]
+                elif state["result_index"] >= res_scroll + visible_res:
+                    res_scroll = state["result_index"] - visible_res + 1
+                state["result_scroll"] = res_scroll
+                for i, row in enumerate(results[res_scroll : res_scroll + visible_res]):
+                    absolute = res_scroll + i
+                    selected = active_section == "results" and absolute == state["result_index"]
+                    attr = self.colors.get("button", curses.A_REVERSE) if selected else 0
+                    title = str(row.get("primaryTitle") or "")
+                    display = f"{row.get('tconst')} | {title[:20]:20} | {row.get('startYear') or '-':>4} | rating={row.get('averageRating') or '-':>4} | votes={row.get('numVotes') or 0:>6} | eval={row.get('evaluation_score', 0):.3f}"
+                    self.write(result_y + 1 + i, 4, display[: max(0, main_w - 8)], attr)
+
+            self.draw_footer("←/→ section  ↑/↓ move  Enter=select  x/backspace=back")
+            self.refresh()
+            ch = self.stdscr.getch()
+            if ch == curses.KEY_LEFT:
+                state["active_section"] = (state["active_section"] - 1) % len(sections)
+            elif ch == curses.KEY_RIGHT:
+                state["active_section"] = (state["active_section"] + 1) % len(sections)
+            elif ch == curses.KEY_UP:
+                if active_section == "filters" and filter_columns:
+                    state["filter_index"] = (state["filter_index"] - 1) % len(filter_columns)
+                elif active_section == "actions":
+                    state["action_index"] = (state["action_index"] - 1) % len(action_labels)
+                elif active_section == "results" and results:
+                    state["result_index"] = (state["result_index"] - 1) % len(results)
+            elif ch == curses.KEY_DOWN:
+                if active_section == "filters" and filter_columns:
+                    state["filter_index"] = (state["filter_index"] + 1) % len(filter_columns)
+                elif active_section == "actions":
+                    state["action_index"] = (state["action_index"] + 1) % len(action_labels)
+                elif active_section == "results" and results:
+                    state["result_index"] = (state["result_index"] + 1) % len(results)
+            elif ch in (10, 13, curses.KEY_ENTER):
+                if active_section == "search":
+                    entered = self.prompt_line("Search title", session.search_text)
+                    if entered is not None:
+                        self.controller.update_search_text(entered, dataset_name)
+                        self.message = "Search updated."
+                elif active_section == "filters" and filter_columns:
+                    column = filter_columns[state["filter_index"]]
+                    self.handle_filter_pick(dataset_name, column["name"], column["value_kind"])
+                elif active_section == "actions":
+                    if state["action_index"] == 0:
+                        try:
+                            self.run_with_spinner("Querying rows", self.controller.run_query, dataset_name)
+                            self.message = f"Query complete. {len(self.controller.get_selected_rows(dataset_name))} rows loaded."
+                            state["result_index"] = 0
+                            state["active_section"] = len(sections)
+                        except RequestCancelled:
+                            pass
+                        except Exception as exc:
+                            self.message = f"Query failed: {exc}"
+                    else:
+                        self.controller.clear_search_and_filters(dataset_name)
+                        self.message = "Search and filters cleared."
+                        state["result_index"] = 0
+                elif active_section == "results" and results:
+                    selected_row = results[state["result_index"]]
+                    detail_node = node.get("children", [])[0]
+                    self.push_node(detail_node, {"row_id": str(selected_row.get("tconst")), "scroll": 0, "action_index": 0, "section": 0})
+                    return
+            elif ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
+                self.go_back()
+                return
+
+    def handle_filter_pick(self, dataset_name: str, column_name: str, value_kind: str) -> None:
+        try:
+            data = self.run_with_spinner(
+                f"Loading filter options for {column_name}",
+                self.controller.get_filter_choices,
+                column_name,
+                dataset_name=dataset_name,
+            ).get("data", {})
+        except RequestCancelled:
+            return
+        except Exception as exc:
+            self.message = f"Filter request failed: {exc}"
+            return
+
+        choices = data.get("choices", [])
+        if value_kind == "categorical":
+            selection = self.select_from_list(
+                f"Filter: {column_name}",
+                [(f"{c.get('label')} ({c.get('count')})", c) for c in choices],
+                "Categorical values sorted by frequency",
+            )
+            if selection is not None:
+                self.controller.add_or_replace_filter(
+                    {"column": column_name, "kind": "categorical", "value": selection.get("value")},
+                    dataset_name,
+                )
+                self.message = f"Filter set on {column_name}."
+        else:
+            selection = self.select_from_list(
+                f"Filter: {column_name}",
+                [(f"{c.get('label')} ({c.get('count')})", c) for c in choices],
+                "Numeric buckets",
+            )
+            if selection is not None:
+                self.controller.add_or_replace_filter(
+                    {
+                        "column": column_name,
+                        "kind": "numeric",
+                        "min": selection.get("min"),
+                        "max": selection.get("max"),
+                    },
+                    dataset_name,
+                )
+                self.message = f"Filter set on {column_name}."
+
+    def run_row_detail_screen(self, node: Dict[str, Any]) -> None:
+        dataset_name = self.controller.get_dataset()
+        state = self.current_state()
+        row_id = state.get("row_id")
+        try:
+            detail = self.run_with_spinner("Loading row detail", self.controller.get_row_detail, row_id, dataset_name).get("data", {})
+        except RequestCancelled:
+            return
+        except Exception as exc:
+            self.message = f"Failed to load row detail: {exc}"
+            self.go_back()
+            return
+        row = detail.get("row", {})
+        evaluation = detail.get("evaluation", {})
+        while True:
+            self.clear()
+            start_row = self.draw_header(node.get("title", "Selected Row"), f"Row ID: {row_id}")
+            self.draw_http_log_panel(0)
+            max_y, main_w, _ = self.get_layout_dims()
+            body_h = max_y - start_row - 2
+            left_w = max(36, (main_w - 6) * 2 // 3)
+            right_w = main_w - 6 - left_w
+            self.draw_box(start_row, 2, body_h, left_w, "Movie Detail", active=(state.get("section", 0) == 0))
+            self.draw_box(start_row, 3 + left_w, body_h, right_w, "Actions", active=(state.get("section", 0) == 1))
+            lines = [
+                f"{k}: {row.get(k)}"
+                for k in [
+                    "tconst", "primaryTitle", "originalTitle", "titleType", "isAdult", "startYear", "endYear",
+                    "runtimeMinutes", "genres", "averageRating", "numVotes",
+                ]
+            ]
+            lines += ["", "Evaluation"]
+            for key in [
+                "score", "summary", "average_rating", "num_votes", "global_mean_rating", "global_votes_threshold",
+                "weighted_rating", "recency_norm", "recency_multiplier", "final_score",
+            ]:
+                if key in evaluation:
+                    lines.append(f"{key}: {evaluation.get(key)}")
+            scroll = state.setdefault("scroll", 0)
+            visible = body_h - 2
+            max_scroll = max(0, len(lines) - visible)
+            scroll = min(scroll, max_scroll)
+            state["scroll"] = scroll
+            for i, line in enumerate(lines[scroll : scroll + visible]):
+                self.write(start_row + 1 + i, 4, line[: max(0, left_w - 4)])
+
+            actions = ["Edit", "Delete"]
+            selected = state.setdefault("action_index", 0)
+            for i, item in enumerate(actions):
+                attr = self.colors.get("button", curses.A_REVERSE) if state.get("section", 0) == 1 and i == selected else 0
+                self.write(start_row + 2 + i * 2, 5 + left_w, f"[ {item} ]", attr)
+
+            self.draw_footer("←/→ section  ↑/↓ move  Enter=select  x/backspace=back")
+            self.refresh()
+            ch = self.stdscr.getch()
+            if ch in (curses.KEY_LEFT, curses.KEY_RIGHT):
+                state["section"] = 1 - state.get("section", 0)
+            elif ch == curses.KEY_UP:
+                if state.get("section", 0) == 0:
+                    state["scroll"] = max(0, state["scroll"] - 1)
+                else:
+                    state["action_index"] = (state["action_index"] - 1) % len(actions)
+            elif ch == curses.KEY_DOWN:
+                if state.get("section", 0) == 0:
+                    state["scroll"] = min(max_scroll, state["scroll"] + 1)
+                else:
+                    state["action_index"] = (state["action_index"] + 1) % len(actions)
+            elif ch in (10, 13, curses.KEY_ENTER):
+                if state.get("section", 0) == 1:
+                    action = actions[state["action_index"]]
+                    if action == "Edit":
+                        edit_node = node.get("children", [])[0]
+                        self.push_node(edit_node, {"row_id": row_id, "selected": 0})
+                        return
+                    if action == "Delete":
+                        if self.confirm(f"Delete row {row_id}?"):
+                            try:
+                                self.run_with_spinner("Deleting row", self.controller.delete_row, row_id, dataset_name)
+                                self.message = f"Row deleted: {row_id}"
+                                self.go_back()
+                                return
+                            except RequestCancelled:
+                                pass
+                            except Exception as exc:
+                                self.message = f"Delete failed: {exc}"
+            elif ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
+                self.go_back()
+                return
+
+    def _format_filter(self, flt: Dict[str, Any]) -> str:
+        if flt.get("kind") == "categorical":
+            return str(flt.get("value"))
+        if flt.get("kind") == "numeric":
+            return f"{flt.get('min')}..{flt.get('max')}"
+        return json.dumps(flt)
 
 
-def run_ui(stdscr, controller, ui_schema) -> None:
+def run_ui(stdscr: Any, controller: Any, ui_schema: Dict[str, Any]) -> None:
     ui = TerminalUi(stdscr, controller, ui_schema)
     ui.run()
 
 
-def main(controller, ui_schema) -> None:
+def main(controller: Any, ui_schema: Dict[str, Any]) -> None:
     curses.wrapper(lambda stdscr: run_ui(stdscr, controller, ui_schema))
-
-
-if __name__ == "__main__":
-    main()
