@@ -574,6 +574,13 @@ class DatabaseManager:
         )
         return "sampled_movies"
 
+    def _attach_percentages(self, choices: List[Dict[str, Any]], total: int) -> List[Dict[str, Any]]:
+        total = int(total or 0)
+        for choice in choices:
+            count = int(choice.get("count", 0) or 0)
+            choice["percentage"] = round((count / total) * 100.0, 2) if total > 0 else 0.0
+        return choices
+
     def _get_filter_choices_for_table(
         self,
         conn: sqlite3.Connection,
@@ -594,10 +601,19 @@ class DatabaseManager:
                 ORDER BY freq DESC, label ASC
                 """
             ).fetchall()
+            total = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM {table_name}
+                WHERE titleType IS NOT NULL
+                  AND TRIM(CAST(titleType AS TEXT)) <> ''
+                """
+            ).fetchone()[0]
             choices = [{"label": r["label"], "value": r["label"], "count": r["freq"]} for r in rows]
+            choices = self._attach_percentages(choices, total)
             if label_search:
                 choices = [c for c in choices if label_search.lower() in str(c["label"]).lower()]
-            return {"dataset_name": dataset_name, "column": column_name, "value_kind": "categorical", "choices": choices}
+            return {"dataset_name": dataset_name, "column": column_name, "value_kind": "categorical", "total": int(total), "choices": choices}
 
         if column_name == "isAdult":
             rows = conn.execute(
@@ -609,10 +625,18 @@ class DatabaseManager:
                 ORDER BY freq DESC, label ASC
                 """
             ).fetchall()
+            total = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM {table_name}
+                WHERE isAdult IN (0, 1)
+                """
+            ).fetchone()[0]
             choices = [{"label": r["label"], "value": int(r["label"]), "count": r["freq"]} for r in rows]
+            choices = self._attach_percentages(choices, total)
             if label_search:
                 choices = [c for c in choices if label_search.lower() in str(c["label"]).lower()]
-            return {"dataset_name": dataset_name, "column": column_name, "value_kind": "categorical", "choices": choices}
+            return {"dataset_name": dataset_name, "column": column_name, "value_kind": "categorical", "total": int(total), "choices": choices}
 
         if column_name == "genres":
             rows = conn.execute(
@@ -636,10 +660,30 @@ class DatabaseManager:
                 ORDER BY freq DESC, label ASC
                 """
             ).fetchall()
+            total = conn.execute(
+                f"""
+                WITH RECURSIVE split(rest, token) AS (
+                    SELECT genres || ',', ''
+                    FROM {table_name}
+                    WHERE genres IS NOT NULL
+                      AND TRIM(genres) <> ''
+                    UNION ALL
+                    SELECT
+                        substr(rest, instr(rest, ',') + 1),
+                        trim(substr(rest, 1, instr(rest, ',') - 1))
+                    FROM split
+                    WHERE rest <> ''
+                )
+                SELECT COUNT(*)
+                FROM split
+                WHERE token <> ''
+                """
+            ).fetchone()[0]
             choices = [{"label": r["label"], "value": r["label"], "count": r["freq"]} for r in rows]
+            choices = self._attach_percentages(choices, total)
             if label_search:
                 choices = [c for c in choices if label_search.lower() in str(c["label"]).lower()]
-            return {"dataset_name": dataset_name, "column": column_name, "value_kind": "categorical", "choices": choices}
+            return {"dataset_name": dataset_name, "column": column_name, "value_kind": "categorical", "total": int(total), "choices": choices}
 
         if column_name == "startYear":
             return self._profile_start_year(conn, dataset_name, table_name)
@@ -662,12 +706,14 @@ class DatabaseManager:
         if mn is None or mx is None:
             return {"dataset_name": dataset_name, "column": "startYear", "value_kind": "numeric", "bucket_count": 0, "choices": []}
         if mn == mx:
+            choices = self._attach_percentages([{"label": f"[{mn}, {mx}]", "min": mn, "max": mx, "count": total}], total)
             return {
                 "dataset_name": dataset_name,
                 "column": "startYear",
                 "value_kind": "numeric",
                 "bucket_count": 1,
-                "choices": [{"label": f"[{mn}, {mx}]", "min": mn, "max": mx, "count": total}],
+                "total": int(total),
+                "choices": choices,
             }
         width = (mx - mn) / 5.0
         boundaries = [mn + width * i for i in range(1, 5)]
@@ -697,9 +743,18 @@ class DatabaseManager:
             label = f"[{int(lo)}, {int(hi)}]" if bucket_idx == 4 else f"[{int(lo)}, {int(hi)})"
             choices.append({"label": label, "min": int(lo), "max": int(hi), "count": freq})
         choices.sort(key=lambda x: (-x["count"], x["label"]))
-        return {"dataset_name": dataset_name, "column": "startYear", "value_kind": "numeric", "bucket_count": 5, "choices": choices}
+        choices = self._attach_percentages(choices, total)
+        return {"dataset_name": dataset_name, "column": "startYear", "value_kind": "numeric", "bucket_count": 5, "total": int(total), "choices": choices}
 
     def _profile_runtime_minutes(self, conn: sqlite3.Connection, dataset_name: str, table_name: str) -> Dict[str, Any]:
+        total = conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM {table_name}
+            WHERE runtimeMinutes IS NOT NULL
+              AND runtimeMinutes >= 0
+            """
+        ).fetchone()[0]
         raw_rows = conn.execute(
             f"""
             WITH bucketed AS (
@@ -727,9 +782,19 @@ class DatabaseManager:
                 label = f"[{lo}, {hi})"
             choices.append({"label": label, "min": lo, "max": hi, "count": freq})
         choices.sort(key=lambda x: (-x["count"], x["label"]))
-        return {"dataset_name": dataset_name, "column": "runtimeMinutes", "value_kind": "numeric", "choices": choices}
+        choices = self._attach_percentages(choices, total)
+        return {"dataset_name": dataset_name, "column": "runtimeMinutes", "value_kind": "numeric", "total": int(total), "choices": choices}
 
     def _profile_average_rating(self, conn: sqlite3.Connection, dataset_name: str, table_name: str) -> Dict[str, Any]:
+        total = conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM {table_name}
+            WHERE averageRating IS NOT NULL
+              AND averageRating >= 0
+              AND averageRating <= 10
+            """
+        ).fetchone()[0]
         raw_rows = conn.execute(
             f"""
             WITH bucketed AS (
@@ -754,9 +819,18 @@ class DatabaseManager:
             label = "[9.5, 10.0]" if bucket_idx == 19 else f"[{lo:.1f}, {hi:.1f})"
             choices.append({"label": label, "min": lo, "max": hi, "count": freq})
         choices.sort(key=lambda x: (-x["count"], x["label"]))
-        return {"dataset_name": dataset_name, "column": "averageRating", "value_kind": "numeric", "choices": choices}
+        choices = self._attach_percentages(choices, total)
+        return {"dataset_name": dataset_name, "column": "averageRating", "value_kind": "numeric", "total": int(total), "choices": choices}
 
     def _profile_num_votes(self, conn: sqlite3.Connection, dataset_name: str, table_name: str) -> Dict[str, Any]:
+        total = conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM {table_name}
+            WHERE numVotes IS NOT NULL
+              AND numVotes >= 0
+            """
+        ).fetchone()[0]
         raw_rows = conn.execute(
             f"""
             WITH bucketed AS (
@@ -789,7 +863,8 @@ class DatabaseManager:
                 label = "[100000, inf)"
             choices.append({"label": label, "min": lo, "max": hi, "count": freq})
         choices.sort(key=lambda x: (-x["count"], x["label"]))
-        return {"dataset_name": dataset_name, "column": "numVotes", "value_kind": "numeric", "choices": choices}
+        choices = self._attach_percentages(choices, total)
+        return {"dataset_name": dataset_name, "column": "numVotes", "value_kind": "numeric", "total": int(total), "choices": choices}
 
     def _normalize_text(self, text: str) -> str:
         return " ".join((text or "").lower().strip().split())

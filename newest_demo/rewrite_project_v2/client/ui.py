@@ -392,6 +392,50 @@ class TerminalUi:
                 self.go_back()
                 return
 
+    def _normalize_field_defs(self, raw_fields: Any) -> List[Dict[str, Any]]:
+        fields: List[Dict[str, Any]] = []
+        for item in raw_fields or []:
+            if isinstance(item, str):
+                fields.append({"name": item, "label": item})
+            elif isinstance(item, dict) and item.get("name"):
+                fields.append({
+                    "name": str(item.get("name")),
+                    "label": str(item.get("label") or item.get("name")),
+                    **item,
+                })
+        return fields
+
+    def _infer_form_fields(self, config: Dict[str, Any], mode: str) -> List[Dict[str, Any]]:
+        primary_key = str(config.get("primary_key_column") or "tconst")
+        preferred_keys = ["create_fields"] if mode == "create" else ["editable_fields", "create_fields"]
+        raw_fields: Any = []
+        for key in preferred_keys:
+            raw_fields = config.get(key)
+            if raw_fields:
+                break
+        fields = self._normalize_field_defs(raw_fields)
+        if fields:
+            return [f for f in fields if f.get("name") != primary_key]
+
+        # Fallback: use filter columns plus important text columns if explicit form fields are absent.
+        names: List[str] = []
+        for key in ("search_column", "original_title_column"):
+            value = config.get(key)
+            if isinstance(value, str) and value and value not in names and value != primary_key:
+                names.append(value)
+        if "originalTitle" not in names and primary_key != "originalTitle":
+            names.append("originalTitle")
+        for item in config.get("filter_columns", []) or []:
+            if isinstance(item, str):
+                name = item
+            elif isinstance(item, dict):
+                name = str(item.get("name") or "")
+            else:
+                name = ""
+            if name and name != primary_key and name not in names:
+                names.append(name)
+        return [{"name": name, "label": name} for name in names]
+
     def run_form_screen(self, node: Dict[str, Any], mode: str) -> None:
         dataset_name = self.controller.get_dataset()
         state = self.current_state()
@@ -399,8 +443,14 @@ class TerminalUi:
             config = self.run_with_spinner("Loading form config", self.controller.load_query_config, dataset_name)["data"]
         except RequestCancelled:
             return
+
+        fields = self._infer_form_fields(config, mode)
+        if not fields:
+            self.message = "No editable fields available."
+            self.go_back()
+            return
+
         if mode == "create":
-            fields = list(config.get("create_fields", []))
             values = state.setdefault("values", {f["name"]: "" for f in fields})
             row_id = None
         else:
@@ -410,24 +460,24 @@ class TerminalUi:
             except RequestCancelled:
                 return
             row = detail.get("data", {}).get("row", {})
-            fields = list(config.get("editable_fields", []))
             values = state.setdefault(
                 "values",
                 {f["name"]: "" if row.get(f["name"]) is None else str(row.get(f["name"])) for f in fields},
             )
+
         state.setdefault("selected", 0)
         state.setdefault("scroll", 0)
         while True:
             self.clear()
             title = node.get("title", "Form")
-            subtitle = "Enter edits fields. Ctrl-U clears the current input line."
+            subtitle = "Create a new row" if mode == "create" else f"Edit row: {row_id}"
             start_row = self.draw_header(title, subtitle)
             self.draw_http_log_panel(0)
             max_y, main_w, _ = self.get_layout_dims()
             box_h = max_y - start_row - 2
             self.draw_box(start_row, 2, box_h, main_w - 4, title, active=True)
             visible_h = box_h - 4
-            items = [("field", f["name"]) for f in fields] + [("action", "Save"), ("action", "Back")]
+            items = [("field", f["name"], f.get("label", f["name"])) for f in fields] + [("action", "Save", "Save")]
             selected = min(state["selected"], len(items) - 1)
             state["selected"] = selected
             scroll = state["scroll"]
@@ -436,14 +486,15 @@ class TerminalUi:
             elif selected >= scroll + visible_h:
                 scroll = selected - visible_h + 1
             state["scroll"] = scroll
-            for i, (kind, key) in enumerate(items[scroll : scroll + visible_h]):
+            for i, item in enumerate(items[scroll : scroll + visible_h]):
+                kind, key, label = item
                 absolute = scroll + i
                 attr = self.colors.get("button", curses.A_REVERSE) if absolute == selected else 0
                 if kind == "field":
                     display = str(values.get(key, ""))
-                    self.write(start_row + 1 + i, 4, f"{key:16} : {display}"[: max(0, main_w - 8)], attr)
+                    self.write(start_row + 1 + i, 4, f"{label:16} : {display}"[: max(0, main_w - 8)], attr)
                 else:
-                    self.write(start_row + 1 + i, 4, f"[ {key} ]", attr)
+                    self.write(start_row + 1 + i, 4, f"[ {label} ]", attr)
             self.draw_footer("↑/↓ move  Enter=edit/select  x/backspace=back")
             self.refresh()
             ch = self.stdscr.getch()
@@ -452,19 +503,20 @@ class TerminalUi:
             elif ch == curses.KEY_DOWN:
                 state["selected"] = (state["selected"] + 1) % len(items)
             elif ch in (10, 13, curses.KEY_ENTER):
-                kind, key = items[state["selected"]]
+                kind, key, label = items[state["selected"]]
                 if kind == "field":
-                    entered = self.prompt_line(f"Edit {key}", str(values.get(key, "")))
+                    entered = self.prompt_line(f"Edit {label}", str(values.get(key, "")))
                     if entered is not None:
                         values[key] = entered
                 elif key == "Save":
                     try:
+                        payload = {k: v for k, v in values.items()}
                         if mode == "create":
-                            result = self.run_with_spinner("Creating row", self.controller.create_row, values, dataset_name)
+                            result = self.run_with_spinner("Creating row", self.controller.create_row, payload, dataset_name)
                             created_id = result.get("data", {}).get("row_id") or result.get("data", {}).get("row", {}).get("tconst")
                             self.message = f"Row created: {created_id}"
                         else:
-                            self.run_with_spinner("Updating row", self.controller.update_row, row_id, values, dataset_name)
+                            self.run_with_spinner("Updating row", self.controller.update_row, row_id, payload, dataset_name)
                             self.message = f"Row updated: {row_id}"
                         self.go_back()
                         return
@@ -472,9 +524,6 @@ class TerminalUi:
                         pass
                     except Exception as exc:
                         self.message = f"Save failed: {exc}"
-                elif key == "Back":
-                    self.go_back()
-                    return
             elif ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
                 self.go_back()
                 return
@@ -707,7 +756,7 @@ class TerminalUi:
             for i, line in enumerate(lines[scroll : scroll + visible]):
                 self.write(start_row + 1 + i, 4, line[: max(0, left_w - 4)])
 
-            actions = ["Edit", "Delete", "Back"]
+            actions = ["Edit", "Delete"]
             selected = state.setdefault("action_index", 0)
             for i, item in enumerate(actions):
                 attr = self.colors.get("button", curses.A_REVERSE) if state.get("section", 0) == 1 and i == selected else 0
@@ -746,9 +795,6 @@ class TerminalUi:
                                 pass
                             except Exception as exc:
                                 self.message = f"Delete failed: {exc}"
-                    if action == "Back":
-                        self.go_back()
-                        return
             elif ch in (ord("x"), ord("X"), curses.KEY_BACKSPACE, 127, 8):
                 self.go_back()
                 return

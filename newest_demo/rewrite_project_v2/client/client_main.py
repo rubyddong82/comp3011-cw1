@@ -164,21 +164,21 @@ class ApiHttpClient:
 
     def create_row(self, dataset_name: str, values: Dict[str, Any]) -> Dict[str, Any]:
         safe_dataset = quote(dataset_name, safe="")
-        return self.request("POST", f"/api/datasets/{safe_dataset}/rows", body={"values": values})
+        return self.request("POST", f"/api/datasets/{safe_dataset}/rows/create", body={"row": values})
 
     def update_row(self, dataset_name: str, row_id: str, values: Dict[str, Any]) -> Dict[str, Any]:
         safe_dataset = quote(dataset_name, safe="")
         safe_row_id = quote(str(row_id), safe="")
         return self.request(
             "PUT",
-            f"/api/datasets/{safe_dataset}/rows/{safe_row_id}",
-            body={"values": values},
+            f"/api/datasets/{safe_dataset}/rows/{safe_row_id}/update",
+            body={"row": values},
         )
 
     def delete_row(self, dataset_name: str, row_id: str) -> Dict[str, Any]:
         safe_dataset = quote(dataset_name, safe="")
         safe_row_id = quote(str(row_id), safe="")
-        return self.request("DELETE", f"/api/datasets/{safe_dataset}/rows/{safe_row_id}")
+        return self.request("DELETE", f"/api/datasets/{safe_dataset}/rows/{safe_row_id}/delete")
 
 
 class ClientController:
