@@ -161,6 +161,20 @@ def health(request: HttpRequest) -> JsonResponse:
 # New dataset-style API
 # -----------------------------
 
+
+@csrf_exempt
+def get_output_logs(request: HttpRequest) -> JsonResponse:
+    if request.method != "GET":
+        return failure("Method not allowed.", error_type="method_not_allowed", status=405)
+
+    try:
+        fn = getattr(db, "get_output_logs", None)
+        if not callable(fn):
+            return success({"logs": []})
+        return success({"logs": fn()})
+    except Exception as exc:
+        return handle_db_error(exc)
+
 @csrf_exempt
 def list_datasets(request: HttpRequest) -> JsonResponse:
     if request.method != "GET":
@@ -174,17 +188,6 @@ def list_datasets(request: HttpRequest) -> JsonResponse:
         if isinstance(data, dict) and "datasets" in data:
             return success(data)
         return success({"datasets": data if isinstance(data, list) else []})
-    except Exception as exc:
-        return handle_db_error(exc)
-
-
-@csrf_exempt
-def get_output_logs(request: HttpRequest) -> JsonResponse:
-    if request.method != "GET":
-        return failure("Method not allowed.", error_type="method_not_allowed", status=405)
-
-    try:
-        return success({"logs": db.get_output_logs()})
     except Exception as exc:
         return handle_db_error(exc)
 

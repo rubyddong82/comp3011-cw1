@@ -152,20 +152,6 @@ class TerminalUi:
         self.write(max_y - 1, 0, fill, self.colors.get("footer", curses.A_REVERSE))
         self.write(max_y - 1, 1, footer, self.colors.get("footer", curses.A_REVERSE))
 
-    def _wrap_lines(self, lines: List[str], width: int, max_source_lines: int = 120) -> List[str]:
-        wrapped: List[str] = []
-        safe_width = max(8, width)
-        for raw_line in lines[-max_source_lines:]:
-            line = str(raw_line)
-            if not line:
-                wrapped.append("")
-                continue
-            while len(line) > safe_width:
-                wrapped.append(line[:safe_width])
-                line = line[safe_width:]
-            wrapped.append(line)
-        return wrapped
-
     def draw_http_log_panel(self, top_y: int = 0) -> None:
         max_y, main_w, log_w = self.get_layout_dims()
         if log_w <= 0:
@@ -175,20 +161,30 @@ class TerminalUi:
         self.draw_box(top_y, x, h, log_w, "HTTP Log", active=False)
         logs = self.controller.get_http_logs()
         visible_h = h - 2
-        wrapped = self._wrap_lines(logs, log_w - 3, max_source_lines=60)
+        wrapped: List[str] = []
+        width = max(8, log_w - 3)
+        for line in logs[-60:]:
+            while len(line) > width:
+                wrapped.append(line[:width])
+                line = line[width:]
+            wrapped.append(line)
         for i, line in enumerate(wrapped[-visible_h:]):
             self.write(top_y + 1 + i, x + 1, line)
 
     def draw_output_log_panel(self, y: int, x: int, h: int, w: int) -> None:
-        if h < 3 or w < 8:
+        if h <= 2 or w <= 4:
             return
         self.draw_box(y, x, h, w, "Output Log", active=False)
-        try:
-            logs = self.controller.get_output_logs()
-        except Exception as exc:
-            logs = [f"<failed to load output log: {exc}>"]
+        logs = self.controller.get_output_logs()
         visible_h = h - 2
-        wrapped = self._wrap_lines(logs, w - 3, max_source_lines=120)
+        wrapped: List[str] = []
+        width = max(8, w - 3)
+        for line in logs[-120:]:
+            line = str(line)
+            while len(line) > width:
+                wrapped.append(line[:width])
+                line = line[width:]
+            wrapped.append(line)
         for i, line in enumerate(wrapped[-visible_h:]):
             self.write(y + 1 + i, x + 1, line)
 
@@ -196,17 +192,13 @@ class TerminalUi:
         self.clear()
         self.draw_http_log_panel(0)
         max_y, main_w, _ = self.get_layout_dims()
-
         output_h = max(8, max_y // 3)
-        output_h = min(output_h, max(8, max_y - 10))
-        output_y = max(1, max_y - output_h - 1)
+        output_y = max_y - output_h - 1
         output_x = 2
         output_w = max(24, main_w - 4)
         self.draw_output_log_panel(output_y, output_x, output_h, output_w)
-
-        free_h = max(7, output_y - 2)
         h, w = 7, min(56, max(24, main_w - 4))
-        y = max(1, (free_h - h) // 2)
+        y = max(1, (output_y - h) // 2)
         x = max(2, (main_w - w) // 2)
         self.draw_box(y, x, h, w, "Working", active=True)
         spinner = self.SPINNER_FRAMES[self.spinner_index]

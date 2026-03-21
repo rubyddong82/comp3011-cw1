@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import threading
 import uuid
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -25,6 +27,7 @@ NUMERIC_FILTER_COLUMNS = {"startYear", "runtimeMinutes", "averageRating", "numVo
 CATEGORICAL_FILTER_COLUMNS = {"titleType", "isAdult", "genres"}
 PREFETCH_SAMPLE_RATIO = 0.10
 FILTERED_QUERY_SAMPLE_RATIO = 0.05
+OUTPUT_LOG_MAX_LINES = 400
 # QUERY_FETCH_CAP = 300
 
 
@@ -66,6 +69,8 @@ class DatabaseManager:
         self._query_config_cache: Dict[str, Dict[str, Any]] = {}
         self._filter_choice_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
         self._query_eval_cache: Dict[str, Dict[str, Any]] = {}
+        self._output_log_lock = threading.Lock()
+        self._output_logs = deque(maxlen=OUTPUT_LOG_MAX_LINES)
         self._ensure_internal_tables()
 
     @contextmanager
@@ -98,6 +103,20 @@ class DatabaseManager:
                 )
                 """
             )
+
+    def _log_output(self, text: Any) -> None:
+        with self._output_log_lock:
+            lines = str(text).splitlines() or [""]
+            for line in lines:
+                self._output_logs.append(str(line))
+
+    def get_output_logs(self) -> List[str]:
+        with self._output_log_lock:
+            return list(self._output_logs)
+
+    def clear_output_logs(self) -> None:
+        with self._output_log_lock:
+            self._output_logs.clear()
 
     # ----------------------------
     # Dataset registry
@@ -334,22 +353,18 @@ class DatabaseManager:
         info = self.get_dataset_info(dataset_name)
         limit = 20
         offset = max(0, int(offset))
+        table = self._quote_identifier(info["table_name"])
         quoted_pk = self._quote_identifier(info["primary_key_column"])
 
-        active_filters: List[Dict[str, Any]] = []
+        where_clauses: List[str] = []
+        params: List[Any] = []
+
         for flt in filters or []:
             column = flt.get("column")
             if not column:
                 continue
             if column not in SUPPORTED_FILTER_COLUMNS:
                 continue
-            active_filters.append(flt)
-
-        where_clauses: List[str] = []
-        params: List[Any] = []
-
-        for flt in active_filters:
-            column = flt.get("column")
             qcol = self._quote_identifier(column)
 
             if flt.get("kind") == "categorical":
@@ -374,16 +389,11 @@ class DatabaseManager:
             else:
                 raise ValidationError(f"Unsupported filter kind for '{column}'.")
 
+        sql = f"SELECT * FROM {table}"
+        if where_clauses:
+            sql += "\nWHERE " + "\n  AND ".join(where_clauses)
+
         with self._connect() as conn:
-            source_table = info["table_name"]
-            if active_filters:
-                source_table = self._make_sample_table(conn, info["table_name"], FILTERED_QUERY_SAMPLE_RATIO)
-            table = self._quote_identifier(source_table)
-
-            sql = f"SELECT * FROM {table}"
-            if where_clauses:
-                sql += "\nWHERE " + "\n  AND ".join(where_clauses)
-
             cur = conn.execute(sql, params)
             rows: List[Dict[str, Any]] = []
             while True:

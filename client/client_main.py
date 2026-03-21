@@ -103,9 +103,6 @@ class ApiHttpClient:
     def get_datasets(self) -> Dict[str, Any]:
         return self.request("GET", "/api/datasets")
 
-    def get_output_logs(self) -> Dict[str, Any]:
-        return self.request("GET", "/api/output-logs")
-
     def get_dataset_query_config(self, dataset_name: str) -> Dict[str, Any]:
         safe_name = quote(dataset_name, safe="")
         return self.request("GET", f"/api/datasets/{safe_name}/query-config")
@@ -183,6 +180,9 @@ class ApiHttpClient:
         safe_row_id = quote(str(row_id), safe="")
         return self.request("DELETE", f"/api/datasets/{safe_dataset}/rows/{safe_row_id}/delete")
 
+    def get_output_logs(self) -> Dict[str, Any]:
+        return self.request("GET", "/api/output-logs")
+
 
 class ClientController:
     def __init__(self, api_client: ApiHttpClient) -> None:
@@ -198,8 +198,11 @@ class ClientController:
         return self.api.get_logs()
 
     def get_output_logs(self) -> List[str]:
-        response = self.api.get_output_logs()
-        return response.get("data", {}).get("logs", [])
+        try:
+            response = self.api.get_output_logs()
+            return response.get("data", {}).get("logs", [])
+        except Exception as exc:
+            return [f"<failed to load output log: {exc}>"]
 
     def get_datasets(self, refresh: bool = False) -> List[Dict[str, Any]]:
         if refresh or not self.dataset_catalog:

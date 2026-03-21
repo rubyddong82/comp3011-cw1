@@ -55,64 +55,7 @@ IMDB_FILES = {
             ("idx_title_ratings_numVotes", ["numVotes"]),
             ("idx_title_ratings_averageRating", ["averageRating"]),
         ],
-    },
-    "name.basics.tsv": {
-        "table": "name_basics",
-        "columns": [
-            ("nconst", "TEXT"),
-            ("primaryName", "TEXT"),
-            ("birthYear", "INTEGER"),
-            ("deathYear", "INTEGER"),
-            ("primaryProfession", "TEXT"),
-            ("knownForTitles", "TEXT"),
-        ],
-        "unique_indexes": [
-            ("ux_name_basics_nconst", ["nconst"]),
-        ],
-        "indexes": [
-            ("idx_name_basics_primaryName", ["primaryName"]),
-        ],
-    },
-    "title.principals.tsv": {
-        "table": "title_principals",
-        "columns": [
-            ("tconst", "TEXT"),
-            ("ordering", "INTEGER"),
-            ("nconst", "TEXT"),
-            ("category", "TEXT"),
-            ("job", "TEXT"),
-            ("characters", "TEXT"),
-        ],
-        "unique_indexes": [
-            ("ux_title_principals_tconst_ordering", ["tconst", "ordering"]),
-        ],
-        "indexes": [
-            ("idx_title_principals_tconst", ["tconst"]),
-            ("idx_title_principals_nconst", ["nconst"]),
-            ("idx_title_principals_category", ["category"]),
-        ],
-    },
-    "title.akas.tsv": {
-        "table": "title_akas",
-        "columns": [
-            ("titleId", "TEXT"),
-            ("ordering", "INTEGER"),
-            ("title", "TEXT"),
-            ("region", "TEXT"),
-            ("language", "TEXT"),
-            ("types", "TEXT"),
-            ("attributes", "TEXT"),
-            ("isOriginalTitle", "INTEGER"),
-        ],
-        "unique_indexes": [
-            ("ux_title_akas_titleId_ordering", ["titleId", "ordering"]),
-        ],
-        "indexes": [
-            ("idx_title_akas_titleId", ["titleId"]),
-            ("idx_title_akas_region", ["region"]),
-            ("idx_title_akas_language", ["language"]),
-        ],
-    },
+    }
 }
 
 INTEGER_HINTS = {
