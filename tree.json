@@ -1,0 +1,43 @@
+[
+  {"type":"directory","name":".","contents":[
+    {"type":"file","name":"README.md"},
+    {"type":"directory","name":"__pycache__","contents":[
+      {"type":"file","name":"main.cpython-313.pyc"}
+    ]},
+    {"type":"directory","name":"client","contents":[
+      {"type":"file","name":"__init__.py"},
+      {"type":"directory","name":"__pycache__","contents":[
+        {"type":"file","name":"__init__.cpython-312.pyc"},
+        {"type":"file","name":"__init__.cpython-313.pyc"},
+        {"type":"file","name":"client_main.cpython-312.pyc"},
+        {"type":"file","name":"client_main.cpython-313.pyc"},
+        {"type":"file","name":"ui.cpython-312.pyc"},
+        {"type":"file","name":"ui.cpython-313.pyc"}
+      ]},
+      {"type":"file","name":"client_main.py"},
+      {"type":"file","name":"new_ui_schema.json"},
+      {"type":"file","name":"ui.py"}
+    ]},
+    {"type":"file","name":"main.py"},
+    {"type":"directory","name":"server","contents":[
+      {"type":"file","name":"__init__.py"},
+      {"type":"directory","name":"__pycache__","contents":[
+        {"type":"file","name":"__init__.cpython-312.pyc"},
+        {"type":"file","name":"__init__.cpython-313.pyc"},
+        {"type":"file","name":"db.cpython-312.pyc"},
+        {"type":"file","name":"db.cpython-313.pyc"},
+        {"type":"file","name":"server_main.cpython-312.pyc"},
+        {"type":"file","name":"server_main.cpython-313.pyc"}
+      ]},
+      {"type":"file","name":"db.py"},
+      {"type":"file","name":"imdb.db"},
+      {"type":"file","name":"imdb_tsv_to_db.py"},
+      {"type":"file","name":"server_main.py"},
+      {"type":"file","name":"title.basics.tsv"},
+      {"type":"file","name":"title.ratings.tsv"}
+    ]},
+    {"type":"file","name":"tree.json"}
+  ]}
+,
+  {"type":"report","directories":6,"files":27}
+]
