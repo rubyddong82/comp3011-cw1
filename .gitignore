@@ -1,1 +1,6 @@
-tsv/
+server/imdb.db
+server/title.basics.tsv
+server/title.ratings.tsv
+__pycache__/
+server/__pycache__/
+*.pyc
