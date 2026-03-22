@@ -147,6 +147,7 @@ kaggle datasets download ashirwadsangwan/imdb-dataset \
 mv title.basics.tsv server/ && \
 mv title.ratings.tsv server/ && \
 python server/imdb_to_db.py
+sqlite3 server/imdb.db server/make_movies.sql
 python main.py
 ```
 
