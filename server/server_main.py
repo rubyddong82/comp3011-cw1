@@ -43,7 +43,7 @@ except ImportError:
 
 DB_PATH = str((SERVER_DIR / "imdb.db").resolve())
 DEFAULT_DATASET_NAME = os.environ.get("APP_DATASET_NAME", "movies")
-DEFAULT_TABLE_NAME = os.environ.get("APP_TABLE_NAME", "movies")
+DEFAULT_TABLE_NAME = os.environ.get("APP_TABLE_NAME", "movies_small")
 DEFAULT_SEARCH_COLUMN = os.environ.get("APP_SEARCH_COLUMN", "primaryTitle")
 DEFAULT_PRIMARY_KEY = os.environ.get("APP_PRIMARY_KEY", "tconst")
 

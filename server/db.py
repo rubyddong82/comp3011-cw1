@@ -30,6 +30,8 @@ FILTERED_QUERY_SAMPLE_RATIO = 0.05
 OUTPUT_LOG_MAX_LINES = 400
 # QUERY_FETCH_CAP = 300
 
+TABLE_NAME = "small_movies"
+
 
 @dataclass(frozen=True)
 class ColumnMeta:

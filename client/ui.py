@@ -189,7 +189,6 @@ class TerminalUi:
             self.write(y + 1 + i, x + 1, line)
 
     def draw_loading_overlay(self, label: str) -> None:
-        self.clear()
         self.draw_http_log_panel(0)
         max_y, main_w, _ = self.get_layout_dims()
         output_h = max(8, max_y // 3)

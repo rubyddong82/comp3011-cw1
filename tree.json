@@ -32,6 +32,8 @@
       {"type":"file","name":"db.py"},
       {"type":"file","name":"imdb.db"},
       {"type":"file","name":"imdb_tsv_to_db.py"},
+      {"type":"file","name":"inspect.sql"},
+      {"type":"file","name":"make_movies.sql"},
       {"type":"file","name":"server_main.py"},
       {"type":"file","name":"title.basics.tsv"},
       {"type":"file","name":"title.ratings.tsv"}
@@ -39,5 +41,5 @@
     {"type":"file","name":"tree.json"}
   ]}
 ,
-  {"type":"report","directories":6,"files":27}
+  {"type":"report","directories":6,"files":29}
 ]
